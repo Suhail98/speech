@@ -35,7 +35,7 @@ def run_python(source, output):
 i = 0
 def process_files(filename):
             source = os.path.join(source_dir, filename)
-            output = "output\\" + os.path.splitext(filename)[0] + ".srt"
+            output = "output/" + os.path.splitext(filename)[0] + ".srt"
             print("=" * 60)
             print("Source:", source)
             print("Output:", output)            
@@ -69,7 +69,7 @@ if __name__ == "__main__":
     # Wait for all threads to finish
     for thread in threads:
         thread.join()
-    for file in os.listdir("output\\"):
+    for file in os.listdir("output/"):
         blob_client = output_container_client.get_blob_client(file)  # Use the container client to get the blob client
-        with open("output\\" + file, "rb") as srt:
+        with open("output/" + file, "rb") as srt:
             blob_client.upload_blob(srt)
