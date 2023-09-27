@@ -4,6 +4,7 @@ from azure.storage.blob import BlobServiceClient
 from SrtToTextgrid import srt_to_textGrid
 import threading
 import shutil
+import zipfile
 
 def moveFailedFiles():
     input_directory = "input"
@@ -28,6 +29,27 @@ def moveFailedFiles():
         if not os.path.exists(textgrid_path):
             print(f"Moving {mp3_file} to the 'failed' directory.")
             shutil.move(mp3_path, os.path.join(failed_directory, mp3_file))
+def deleteAllZipFiles():
+    # Specify the directory path
+    output_directory = "zipFiles"
+    # Check if the directory exists
+    if os.path.exists(output_directory) and os.path.isdir(output_directory):
+        # List all files in the directory
+        files = os.listdir(output_directory)
+
+        # Loop through the files and delete .srt files
+        for file_name in files:
+            
+                file_path = os.path.join(output_directory, file_name)
+                
+                try:
+                    # Delete the .srt file
+                    os.remove(file_path)
+                    print(f"Deleted .srt file: {file_path}")
+                except Exception as e:
+                    print(f"Error deleting .srt file: {file_path}, {e}")
+    else:
+        print(f"Directory not found: {output_directory}")
 
 def deleteAllOutputFiles():
         # Specify the directory path
@@ -77,18 +99,43 @@ def deleteAllMP3Files():
     else:
         print(f"Directory not found: {directory_path}")
 
+def downloadMP3FilesFromBlob():
+    # List all MP3 files in the input container
+    blobs = input_container_client.list_blobs()
+    mp3_files = [blob.name for blob in blobs if blob.name.endswith(".mp3")]
+    for file in mp3_files:
+        print(f"\nDownloading {file} from Azure Storage...")
+        blob_client = input_container_client.get_blob_client(file)
+        download_file_path = "input/"+file
+        with open(download_file_path, "wb") as download_file:
+            download_file.write(blob_client.download_blob().readall())
+
+def downloadZIPFilesFromBlob():
+    # List all MP3 files in the input container
+    blobs = input_container_client.list_blobs()
+    zip_files = [blob.name for blob in blobs if blob.name.endswith(".zip")]
+    for file in zip_files:
+        print(f"\nDownloading {file} from Azure Storage...")
+        blob_client = input_container_client.get_blob_client(file)
+        download_file_path = "zipFiles/"+file
+        with open(download_file_path, "wb") as download_file:
+            download_file.write(blob_client.download_blob().readall())
+def unzip():
+    zipPath = "zipFiles"
+    destinationPath = "input"
+    for file in os.listdir(zipPath):
+        zip_file = zipfile.ZipFile(os.path.join(zipPath,file), 'r')
+        # Extract the contents to the destination folder
+        zip_file.extractall(destinationPath)
+        # Close the zip file
+        zip_file.close()
 # Function to process each MP3 file
-def process_mp3(input_blob_name):
-    print(f"\nDownloading {input_blob_name} from Azure Storage...")
-    blob_client = input_container_client.get_blob_client(input_blob_name)
-    download_file_path = "input/"+input_blob_name
-    with open(download_file_path, "wb") as download_file:
-        download_file.write(blob_client.download_blob().readall())
+def process_mp3(file):   
     # Run captioning script on downloaded audio file
-    output_file = "output/"+input_blob_name.replace(".mp3", ".srt")
+    output_file = "output/"+file.replace(".mp3", ".srt")
     command = [
-        "python", "captioning/captioning.py",
-        "--input", download_file_path,
+        "python3", "captioning/captioning.py",
+        "--input", os.path.join("input",file),
         "--format", "any",
         "--output", output_file,
         "--srt",
@@ -102,9 +149,9 @@ def process_mp3(input_blob_name):
         "--phrases", phrases
     ]
 
-    result = subprocess.run(command, capture_output=True, text=True)
+    subprocess.run(command, capture_output=True, text=True)
 
-    print(result.stdout)
+    #print(result.stdout)
     #with open("output.txt", "a") as file:
     #    file.write(result.stdout)
 
@@ -113,12 +160,12 @@ def process_mp3(input_blob_name):
     srt_to_textGrid(output_file , textgrid_file)
 
     # Write the output to a new blob in the output container
-    print(f"\nWriting output textgrid for {input_blob_name} to a new blob...")
+    print(f"\nWriting output textgrid for {file} to a new blob...")
     with open(textgrid_file, "rb") as data:
         blob_client = output_container_client.get_blob_client(textgrid_file)
         blob_client.upload_blob(data, overwrite=True)
     
-    print(f"\nDone processing {input_blob_name}.")
+    print(f"\nDone processing {file}.")
 
 # Azure storage account details
 connection_string = "DefaultEndpointsProtocol=https;AccountName=egabistorage;AccountKey=gcXX6kMcy7XQqAd1MT2CfGqKiauMAdtvaA636hKA7f5LwfkV6yK8UofTax7wDFQrZKBMH8z9DaiB+AStAC/EfA==;EndpointSuffix=core.windows.net"
@@ -136,16 +183,17 @@ blob_service_client = BlobServiceClient.from_connection_string(connection_string
 # Get clients for both the input and output containers
 input_container_client = blob_service_client.get_container_client(input_container_name)
 output_container_client = blob_service_client.get_container_client(output_container_name)
+downloadZIPFilesFromBlob()
+downloadMP3FilesFromBlob()
+unzip()
 
-# List all MP3 files in the input container
-blobs = input_container_client.list_blobs()
-mp3_files = [blob.name for blob in blobs if blob.name.endswith(".mp3")]
+directory_path = 'input'
+mp3_files = [os.path.relpath(os.path.join(root, file), directory_path) for root, dirs, files in os.walk(directory_path) for file in files if file.endswith('.mp3')]
+print(mp3_files)
+
 
 # Create and start threads for processing MP3 files
-threads = []
-maxThreads = 2
-
-
+maxThreads = 100
 for i in range(len(mp3_files)):
     threads = []
     for mp3_file in mp3_files[i*maxThreads : min(len(mp3_files),(i+1)*maxThreads)]:
@@ -161,8 +209,6 @@ moveFailedFiles()
 print("\nAll MP3 files processed.")
 deleteAllMP3Files()
 deleteAllOutputFiles()
-
-
-
+deleteAllZipFiles()
 
 
