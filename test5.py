@@ -3,9 +3,33 @@ import subprocess
 from azure.storage.blob import BlobServiceClient
 from SrtToTextgrid import srt_to_textGrid
 import threading
+import shutil
 
+def moveFailedFiles():
+    input_directory = "input"
+    output_directory = "output"
+    failed_directory = "failed"
 
-def deleteAllSRTFiles():
+    # Ensure the directories exist
+    for directory in [input_directory, output_directory, failed_directory]:
+        if not os.path.exists(directory):
+            os.makedirs(directory)
+
+    # Get a list of MP3 files in the input directory
+    mp3_files = [f for f in os.listdir(input_directory) if f.endswith(".mp3")]
+
+    # Check each MP3 file
+    for mp3_file in mp3_files:
+        mp3_path = os.path.join(input_directory, mp3_file)
+        textgrid_file = mp3_file.replace(".mp3", ".TextGrid")
+        textgrid_path = os.path.join(output_directory, textgrid_file)
+
+        # If the corresponding TextGrid file doesn't exist in the output directory
+        if not os.path.exists(textgrid_path):
+            print(f"Moving {mp3_file} to the 'failed' directory.")
+            shutil.move(mp3_path, os.path.join(failed_directory, mp3_file))
+
+def deleteAllOutputFiles():
         # Specify the directory path
     output_directory = "output"
 
@@ -16,7 +40,7 @@ def deleteAllSRTFiles():
 
         # Loop through the files and delete .srt files
         for file_name in files:
-            if file_name.endswith(".srt"):
+            
                 file_path = os.path.join(output_directory, file_name)
                 
                 try:
@@ -63,7 +87,7 @@ def process_mp3(input_blob_name):
     # Run captioning script on downloaded audio file
     output_file = "output/"+input_blob_name.replace(".mp3", ".srt")
     command = [
-        "python3", "captioning/captioning.py",
+        "python", "captioning/captioning.py",
         "--input", download_file_path,
         "--format", "any",
         "--output", output_file,
@@ -81,8 +105,10 @@ def process_mp3(input_blob_name):
     result = subprocess.run(command, capture_output=True, text=True)
 
     print(result.stdout)
-    
-    textgrid_file = output_file.replace(".srt", "_file.TextGrid")
+    #with open("output.txt", "a") as file:
+    #    file.write(result.stdout)
+
+    textgrid_file = output_file.replace(".srt", ".TextGrid")
 
     srt_to_textGrid(output_file , textgrid_file)
 
@@ -117,20 +143,24 @@ mp3_files = [blob.name for blob in blobs if blob.name.endswith(".mp3")]
 
 # Create and start threads for processing MP3 files
 threads = []
-print(mp3_files)
+maxThreads = 2
 
-for mp3_file in mp3_files:
-    thread = threading.Thread(target=process_mp3, args=(mp3_file,))
-    threads.append(thread)
-    thread.start()
 
-# Wait for all threads to complete
-for thread in threads:
-    thread.join()
+for i in range(len(mp3_files)):
+    threads = []
+    for mp3_file in mp3_files[i*maxThreads : min(len(mp3_files),(i+1)*maxThreads)]:
+        thread = threading.Thread(target=process_mp3, args=(mp3_file,))
+        threads.append(thread)
+        thread.start()
 
+    # Wait for all threads to complete
+    for thread in threads:
+        thread.join()
+
+moveFailedFiles()
 print("\nAll MP3 files processed.")
 deleteAllMP3Files()
-deleteAllSRTFiles()
+deleteAllOutputFiles()
 
 
 
