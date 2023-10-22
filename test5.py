@@ -5,6 +5,46 @@ from SrtToTextgrid import srt_to_textGrid
 import threading
 import shutil
 import zipfile
+import sys
+if len(sys.argv) < 1:
+        print("Usage: python script.py <arg1> [arg2] [arg3] ...")
+        sys.exit(1)
+# Initialize a boolean flag with a default value
+resume = False
+
+# Check if the '--flag' argument is present in sys.argv
+if '--resume' in sys.argv:
+        resume = True
+        sys.argv.remove('--resume')  # Remove the flag from sys.argv
+def create_batch_folders(input_container_name):
+    # Define the main folder name based on the input_container_name variable
+    input_container_name = input_container_name  # Replace with your actual container name
+
+    # Check if the main folder exists, and create it if it doesn't
+    if not os.path.exists(input_container_name):
+            os.makedirs(input_container_name)
+
+            # Create subfolders inside the main folder
+    subfolders = ["input", "output", "zipFiles", "failed"]
+
+    for folder in subfolders:
+                    folder_path = os.path.join(input_container_name, folder)
+                    if not os.path.exists(folder_path):
+                                    os.makedirs(folder_path)
+                                    print(f"Folders created in '{input_container_name}' with subfolders: {', '.join(subfolders)}")
+def process_mp3_file(input_container_name,mp3_file):
+        source_folder = os.path.join(input_container_name,"input")
+        failed_folder = os.path.join(input_container_name,"failed")
+        output_folder = os.path.join(input_container_name,"output")
+        mp3_path = os.path.join(source_folder, mp3_file)
+        textgrid_path = os.path.join(output_folder, mp3_file.replace(".mp3", ".TextGrid"))
+        if not os.path.exists(textgrid_path):
+            shutil.move(mp3_path, os.path.join(failed_folder, mp3_file))
+            print(f"Moved '{mp3_file}' to 'failed' folder.")
+        else:
+            os.remove(mp3_path)
+            print(f"Deleted '{mp3_file}' because a matching TextGrid file was found.")
+                                                                                                                        
 
 def moveFailedFiles():
     input_directory = "input"
@@ -29,9 +69,9 @@ def moveFailedFiles():
         if not os.path.exists(textgrid_path):
             print(f"Moving {mp3_file} to the 'failed' directory.")
             shutil.move(mp3_path, os.path.join(failed_directory, mp3_file))
-def deleteAllZipFiles():
+def deleteAllZipFiles(input_container_name):
     # Specify the directory path
-    output_directory = "zipFiles"
+    output_directory = os.path.join(input_container_name,"zipFiles")
     # Check if the directory exists
     if os.path.exists(output_directory) and os.path.isdir(output_directory):
         # List all files in the directory
@@ -110,19 +150,20 @@ def downloadMP3FilesFromBlob():
         with open(download_file_path, "wb") as download_file:
             download_file.write(blob_client.download_blob().readall())
 
-def downloadZIPFilesFromBlob():
+def downloadZIPFilesFromBlob(input_container_name):
     # List all MP3 files in the input container
     blobs = input_container_client.list_blobs()
     zip_files = [blob.name for blob in blobs if blob.name.endswith(".zip")]
+    zip_files = ["missing batch 1B mp3.zip"]
     for file in zip_files:
         print(f"\nDownloading {file} from Azure Storage...")
         blob_client = input_container_client.get_blob_client(file)
-        download_file_path = "zipFiles/"+file
+        download_file_path = input_container_name+"/zipFiles/"+file
         with open(download_file_path, "wb") as download_file:
             download_file.write(blob_client.download_blob().readall())
-def unzip():
-    zipPath = "zipFiles"
-    destinationPath = "input"
+def unzip(input_container_name):
+    zipPath = os.path.join(input_container_name,"zipFiles")
+    destinationPath = os.path.join(input_container_name,"input")
     for file in os.listdir(zipPath):
         zip_file = zipfile.ZipFile(os.path.join(zipPath,file), 'r')
         # Extract the contents to the destination folder
@@ -130,12 +171,13 @@ def unzip():
         # Close the zip file
         zip_file.close()
 # Function to process each MP3 file
-def process_mp3(file):   
+def process_mp3(input_container_name,file):
+   try:
     # Run captioning script on downloaded audio file
-    output_file = "output/"+file.replace(".mp3", ".srt")
+    output_file = input_container_name+"/output/"+file.replace(".mp3", ".srt")
     command = [
         "python3", "captioning/captioning.py",
-        "--input", os.path.join("input",file),
+        "--input", os.path.join(input_container_name+"/input",file),
         "--format", "any",
         "--output", output_file,
         "--srt",
@@ -148,9 +190,9 @@ def process_mp3(file):
         "--region", region,
         "--phrases", phrases
     ]
-
-    subprocess.run(command, capture_output=True, text=True)
-
+    print("starting processing {file} ")
+    subprocess.run(command)
+    
     #print(result.stdout)
     #with open("output.txt", "a") as file:
     #    file.write(result.stdout)
@@ -164,13 +206,17 @@ def process_mp3(file):
     with open(textgrid_file, "rb") as data:
         blob_client = output_container_client.get_blob_client(textgrid_file)
         blob_client.upload_blob(data, overwrite=True)
-    
-    print(f"\nDone processing {file}.")
+    print("uploaded successfullu")
+   except:
+         process_mp3_file(input_container_name,file)
+         return
+   process_mp3_file(input_container_name,file)    
+   print(f"\nDone processing {file}.")
 
 # Azure storage account details
 connection_string = "DefaultEndpointsProtocol=https;AccountName=egabistorage;AccountKey=gcXX6kMcy7XQqAd1MT2CfGqKiauMAdtvaA636hKA7f5LwfkV6yK8UofTax7wDFQrZKBMH8z9DaiB+AStAC/EfA==;EndpointSuffix=core.windows.net"
-input_container_name = "test2"
-output_container_name = "outputdata"
+input_container_name = sys.argv[1]
+#output_container_name = "out1"
 
 # Azure Speech Service subscription details
 key = "f8e22ee1df5449a69ef8395b0173c4f4"
@@ -179,36 +225,66 @@ phrases = "Contoso;Jessie;Rehaan"
 
 # Initialize BlobServiceClient
 blob_service_client = BlobServiceClient.from_connection_string(connection_string)
-
 # Get clients for both the input and output containers
 input_container_client = blob_service_client.get_container_client(input_container_name)
-output_container_client = blob_service_client.get_container_client(output_container_name)
-downloadZIPFilesFromBlob()
-downloadMP3FilesFromBlob()
-unzip()
+create_batch_folders(input_container_name)
+#output_container_client = blob_service_client.get_container_client(output_container_name)
+if resume is False:
+    downloadZIPFilesFromBlob(input_container_name)
+    #downloadMP3FilesFromBlob()
+    unzip(input_container_name)
 
-directory_path = 'input'
+directory_path = os.path.join(input_container_name,'input')
 mp3_files = [os.path.relpath(os.path.join(root, file), directory_path) for root, dirs, files in os.walk(directory_path) for file in files if file.endswith('.mp3')]
 print(mp3_files)
-
-
-# Create and start threads for processing MP3 files
-maxThreads = 100
-for i in range(len(mp3_files)):
+'''
+maxThreads = 18
+i = 0
+while i * maxThreads < len(mp3_files):
+    print(i)
     threads = []
+    print("start threadings")
     for mp3_file in mp3_files[i*maxThreads : min(len(mp3_files),(i+1)*maxThreads)]:
+        print("inside mp3_file")
         thread = threading.Thread(target=process_mp3, args=(mp3_file,))
         threads.append(thread)
         thread.start()
-
+    print("then")
     # Wait for all threads to complete
     for thread in threads:
         thread.join()
+    i += 1
+    print("end")
+'''
+from concurrent.futures import ThreadPoolExecutor
+import concurrent
+import logging
+import time
+# Record the start time
+start_time = time.time()
 
-moveFailedFiles()
+# create a ThreadPoolExecutor
+with ThreadPoolExecutor(max_workers=18) as executor:
+        # start your threads
+        futures = {executor.submit(process_mp3, input_container_name,filename) for filename in mp3_files}
+
+        # handle exceptions
+        for future in concurrent.futures.as_completed(futures):
+            try:
+                data = future.result()
+            except Exception as e:
+                logging.error(f'Error in thread: {e}')
+
+#moveFailedFiles()
 print("\nAll MP3 files processed.")
-deleteAllMP3Files()
-deleteAllOutputFiles()
-deleteAllZipFiles()
-
+#deleteAllMP3Files()
+#deleteAllOutputFiles()
+deleteAllZipFile(input_container_name)
+# Record the end time
+end_time = time.time()
+# Calculate and print the total time
+total_time = (end_time - start_time) // 60
+print("===================================================")
+print(f"The script took {total_time} minutes to complete.")
+print("===================================================")
 
